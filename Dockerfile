@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # 한국어 OCR 모델 사전 다운로드 (cold start 시간 단축)
 RUN python -c "\
 from paddleocr import PaddleOCR; \
-ocr = PaddleOCR(lang='korean', device='cpu', show_log=True); \
+ocr = PaddleOCR(lang='korean', device='cpu'); \
 print('Korean OCR models downloaded')"
 
 # 핸들러 복사

@@ -20,7 +20,9 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # 한국어 OCR 모델 사전 다운로드 (cold start 시간 단축)
-RUN python -c "\
+# 빌드 환경에 GPU가 없으므로 CUDA stub 라이브러리 링크 필요
+RUN ldconfig /usr/local/cuda/compat/ 2>/dev/null; \
+    python -c "\
 from paddleocr import PaddleOCR; \
 ocr = PaddleOCR(lang='korean', device='cpu'); \
 print('Korean OCR models downloaded')"

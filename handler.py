@@ -4,11 +4,9 @@ PaddleOCR 3.x GPU RunPod Serverless Handler
 """
 import base64
 import io
-import json
-import os
-import tempfile
 import traceback
 
+import numpy as np
 from PIL import Image
 import runpod
 
@@ -28,121 +26,42 @@ print("PaddleOCR ready.", flush=True)
 
 
 def extract_results(result):
-    """PaddleOCR 3.x predict 결과에서 OCR 데이터 추출"""
+    """PaddleOCR 3.x predict 결과에서 OCR 데이터 추출
+
+    result는 list of OCRResult (dict-like 객체)
+    각 OCRResult에 dt_polys, rec_text, rec_score 키가 직접 존재
+    """
     ocr_items = []
 
     for res in result:
-        # 방법 1: save_to_json으로 구조화된 데이터 추출
         try:
-            json_dir = tempfile.mkdtemp()
-            res.save_to_json(json_dir)
-            files_found = os.listdir(json_dir)
-            print(f"save_to_json files: {files_found}", flush=True)
-            for fname in files_found:
-                if not fname.endswith(".json"):
-                    continue
-                with open(os.path.join(json_dir, fname)) as f:
-                    data = json.load(f)
+            polys = res.get("dt_polys", [])
+            texts = res.get("rec_text", [])
+            scores = res.get("rec_score", [])
 
-                # 디버그: JSON 구조 출력
-                if isinstance(data, dict):
-                    print(f"JSON keys: {list(data.keys())}", flush=True)
-                    for k, v in data.items():
-                        sample = str(v)[:200] if v else "None"
-                        print(f"  {k}: type={type(v).__name__}, sample={sample}", flush=True)
-                elif isinstance(data, list):
-                    print(f"JSON is list, len={len(data)}", flush=True)
-                    if data:
-                        print(f"  first item type={type(data[0]).__name__}, sample={str(data[0])[:200]}", flush=True)
-
-                if isinstance(data, dict):
-                    items = parse_dict_result(data)
-                    if items:
-                        ocr_items.extend(items)
-                        continue
-                if isinstance(data, list):
-                    items = parse_list_result(data)
-                    if items:
-                        ocr_items.extend(items)
-                        continue
-        except Exception as e:
-            print(f"Method 1 (save_to_json) failed: {e}", flush=True)
-            print(traceback.format_exc(), flush=True)
-
-        # 방법 2: res 속성 탐색
-        try:
-            attrs = [a for a in dir(res) if not a.startswith('_')]
-            print(f"Result obj attrs: {attrs}", flush=True)
-            raw = str(res)
-            print(f"Raw result type: {type(res)}, repr: {raw[:1000]}", flush=True)
-        except Exception:
-            pass
-
-    return ocr_items
-
-
-def parse_dict_result(data):
-    """dict 형태의 결과 파싱"""
-    items = []
-
-    # 형식 1: {rec_text: [], rec_score: [], dt_polys: []}
-    if "rec_text" in data:
-        texts = data.get("rec_text", [])
-        scores = data.get("rec_score", [])
-        polys = data.get("dt_polys", [])
-        for i, text in enumerate(texts):
-            item = {"text": str(text)}
-            if i < len(scores):
-                item["confidence"] = round(float(scores[i]), 4)
-            if i < len(polys):
-                poly = polys[i]
-                xs = [p[0] for p in poly]
-                ys = [p[1] for p in poly]
-                item["bbox"] = [min(xs), min(ys), max(xs), max(ys)]
-            items.append(item)
-        return items
-
-    # 형식 2: {result: [{text: ..., score: ..., bbox: ...}, ...]}
-    if "result" in data and isinstance(data["result"], list):
-        for entry in data["result"]:
-            if isinstance(entry, dict) and "text" in entry:
-                item = {"text": entry["text"]}
-                if "score" in entry:
-                    item["confidence"] = round(float(entry["score"]), 4)
-                if "bbox" in entry:
-                    item["bbox"] = entry["bbox"]
-                elif "dt_poly" in entry:
-                    poly = entry["dt_poly"]
+            for i, text in enumerate(texts):
+                item = {"text": str(text)}
+                if i < len(scores):
+                    score = scores[i]
+                    if isinstance(score, np.floating):
+                        score = float(score)
+                    item["confidence"] = round(float(score), 4)
+                if i < len(polys):
+                    poly = polys[i]
+                    if isinstance(poly, np.ndarray):
+                        poly = poly.tolist()
                     xs = [p[0] for p in poly]
                     ys = [p[1] for p in poly]
-                    item["bbox"] = [min(xs), min(ys), max(xs), max(ys)]
-                items.append(item)
-        return items
+                    item["bbox"] = [
+                        int(min(xs)), int(min(ys)),
+                        int(max(xs)), int(max(ys)),
+                    ]
+                ocr_items.append(item)
+        except Exception as e:
+            print(f"extract error: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
 
-    return None
-
-
-def parse_list_result(data):
-    """list 형태의 결과 파싱 (2.x 호환)"""
-    items = []
-    for entry in data:
-        if isinstance(entry, list) and len(entry) == 2:
-            bbox_points, (text, conf) = entry
-            xs = [p[0] for p in bbox_points]
-            ys = [p[1] for p in bbox_points]
-            items.append({
-                "text": str(text),
-                "confidence": round(float(conf), 4),
-                "bbox": [min(xs), min(ys), max(xs), max(ys)],
-            })
-        elif isinstance(entry, dict) and "text" in entry:
-            item = {"text": entry["text"]}
-            if "score" in entry:
-                item["confidence"] = round(float(entry["score"]), 4)
-            if "bbox" in entry:
-                item["bbox"] = entry["bbox"]
-            items.append(item)
-    return items if items else None
+    return ocr_items
 
 
 def handler(event):
@@ -151,8 +70,6 @@ def handler(event):
     image_b64 = job_input.get("image")
     if not image_b64:
         return {"error": "image field is required (base64 encoded)"}
-
-    lang = job_input.get("lang", "korean")
 
     try:
         # 이미지 디코딩
@@ -164,23 +81,12 @@ def handler(event):
         # OCR 실행
         result = ocr.predict(temp_path)
 
-        # 디버그: result 구조 확인
-        debug_info = {
-            "result_type": type(result).__name__,
-            "result_len": len(result) if hasattr(result, '__len__') else "N/A",
-        }
-        for i, res in enumerate(result):
-            debug_info[f"res_{i}_type"] = type(res).__name__
-            debug_info[f"res_{i}_attrs"] = [a for a in dir(res) if not a.startswith('_')][:30]
-            debug_info[f"res_{i}_str"] = str(res)[:2000]
-
         # 결과 추출
         ocr_items = extract_results(result)
 
         return {
             "ocr_items": ocr_items,
             "ocr_text": [item["text"] for item in ocr_items],
-            "debug": debug_info,
         }
 
     except Exception as e:

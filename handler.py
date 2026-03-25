@@ -36,14 +36,25 @@ def extract_results(result):
         try:
             json_dir = tempfile.mkdtemp()
             res.save_to_json(json_dir)
-            for fname in os.listdir(json_dir):
+            files_found = os.listdir(json_dir)
+            print(f"save_to_json files: {files_found}", flush=True)
+            for fname in files_found:
                 if not fname.endswith(".json"):
                     continue
                 with open(os.path.join(json_dir, fname)) as f:
                     data = json.load(f)
 
-                # PaddleOCR 3.x JSON: {"rec_text": [...], "rec_score": [...], "dt_polys": [...]}
-                # 또는 리스트 형태일 수 있음
+                # 디버그: JSON 구조 출력
+                if isinstance(data, dict):
+                    print(f"JSON keys: {list(data.keys())}", flush=True)
+                    for k, v in data.items():
+                        sample = str(v)[:200] if v else "None"
+                        print(f"  {k}: type={type(v).__name__}, sample={sample}", flush=True)
+                elif isinstance(data, list):
+                    print(f"JSON is list, len={len(data)}", flush=True)
+                    if data:
+                        print(f"  first item type={type(data[0]).__name__}, sample={str(data[0])[:200]}", flush=True)
+
                 if isinstance(data, dict):
                     items = parse_dict_result(data)
                     if items:
@@ -56,11 +67,14 @@ def extract_results(result):
                         continue
         except Exception as e:
             print(f"Method 1 (save_to_json) failed: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
 
-        # 방법 2: str 파싱 (디버깅용 폴백)
+        # 방법 2: res 속성 탐색
         try:
+            attrs = [a for a in dir(res) if not a.startswith('_')]
+            print(f"Result obj attrs: {attrs}", flush=True)
             raw = str(res)
-            print(f"Raw result type: {type(res)}, repr: {raw[:500]}", flush=True)
+            print(f"Raw result type: {type(res)}, repr: {raw[:1000]}", flush=True)
         except Exception:
             pass
 
@@ -150,12 +164,23 @@ def handler(event):
         # OCR 실행
         result = ocr.predict(temp_path)
 
+        # 디버그: result 구조 확인
+        debug_info = {
+            "result_type": type(result).__name__,
+            "result_len": len(result) if hasattr(result, '__len__') else "N/A",
+        }
+        for i, res in enumerate(result):
+            debug_info[f"res_{i}_type"] = type(res).__name__
+            debug_info[f"res_{i}_attrs"] = [a for a in dir(res) if not a.startswith('_')][:30]
+            debug_info[f"res_{i}_str"] = str(res)[:2000]
+
         # 결과 추출
         ocr_items = extract_results(result)
 
         return {
             "ocr_items": ocr_items,
             "ocr_text": [item["text"] for item in ocr_items],
+            "debug": debug_info,
         }
 
     except Exception as e:

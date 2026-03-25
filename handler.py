@@ -35,9 +35,9 @@ def extract_results(result):
 
     for res in result:
         try:
-            polys = res.get("dt_polys", [])
-            texts = res.get("rec_text", [])
-            scores = res.get("rec_score", [])
+            polys = res.get("rec_polys", [])
+            texts = res.get("rec_texts", [])
+            scores = res.get("rec_scores", [])
 
             for i, text in enumerate(texts):
                 item = {"text": str(text)}
@@ -81,25 +81,12 @@ def handler(event):
         # OCR 실행
         result = ocr.predict(temp_path)
 
-        # 디버그: 키 목록 확인
-        debug_info = {}
-        for i, res in enumerate(result):
-            debug_info[f"res_{i}_keys"] = list(res.keys()) if hasattr(res, 'keys') else "no keys"
-            for k in list(res.keys())[:20] if hasattr(res, 'keys') else []:
-                v = res[k]
-                vtype = type(v).__name__
-                if hasattr(v, '__len__'):
-                    debug_info[f"res_{i}_{k}"] = f"{vtype} len={len(v)}"
-                else:
-                    debug_info[f"res_{i}_{k}"] = f"{vtype}: {str(v)[:100]}"
-
         # 결과 추출
         ocr_items = extract_results(result)
 
         return {
             "ocr_items": ocr_items,
             "ocr_text": [item["text"] for item in ocr_items],
-            "debug": debug_info,
         }
 
     except Exception as e:
